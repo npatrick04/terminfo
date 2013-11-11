@@ -34,14 +34,18 @@
 (in-package "TERMINFO")
 
 (export '(*terminfo-directories* *terminfo* capability tparm tputs
-	  set-terminal))
+	  set-terminal capabilities))
 
 (defvar *terminfo-directories* '("/etc/terminfo/"
 				 "/lib/terminfo/"
 				 "/usr/share/terminfo/"
-				 "/usr/share/misc/terminfo/"))
+				 "/usr/share/misc/terminfo/")
+  "Known locations of terminfo databases.")
 
-(defvar *terminfo* nil)
+(defvar *terminfo* nil
+  "The global terminfo structure used as a default variable
+for all commands with an optional terminfo parameter.  This 
+is set any time set-terminal is called.")
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
   (defvar *capabilities* (make-hash-table :size 494)))
@@ -76,7 +80,20 @@
 
 (declaim (inline capability))
 (defun capability (name &optional (terminfo *terminfo*))
+  "Return the contents of the terminfo database for the given parameter.
+Returns nil for undefined capabilities."
   (%capability name terminfo))
+
+(defun capabilities (&optional (terminfo *terminfo*))
+  "Return a list of capabilities for terminfo that are not nil."
+  (let (result)
+    (maphash
+     (lambda (key value)
+       (declare (ignore value))
+       (when (capability key terminfo)
+         (push key result)))
+     *capabilities*)
+    result))
 
 #+CMU
 (declaim (ext:end-block))
@@ -98,7 +115,13 @@
 
 
 (defmacro defcap (name type index)
-  (let ((thing (ecase type
+  "Along with defining the capability information:
+name 
+type: boolean integer or string
+index
+defcap automaticlly defines and exports a symbol-macro
+that calls the capability from *terminfo*."
+  (let ((thing (ecase type              ; indicates the accessor into the terminfo structure
 		 (boolean 'terminfo-booleans)
 		 (integer 'terminfo-numbers)
 		 (string 'terminfo-strings)))
@@ -689,6 +712,7 @@
 				       :numbers numbers :strings strings))))))))))
 
 (defun tparm (string &rest args)
+  "Return the string representing the command and arguments."
   (when (null string) (return-from tparm ""))
   (with-output-to-string (out)
     (with-input-from-string (in string)
@@ -920,7 +944,54 @@
 		  2500000 3000000 3500000 4000000)
 		(logxor baud unix::tty-cbaudex)))))))
 
+(defun print-padded-string (string-stream stream terminfo)
+  "Consume a chunk of a string-stream that defines padding and
+pass the padding on to the stream depending on the capability
+of the terminfo data."
+  (let ((time 0) (force nil) (rate nil) (pad #\Null) c)
+
+    ;; Find out how long to pad for:
+    (read-char string-stream) ; eat the #\<
+    (loop
+       (setq c (read-char string-stream))
+       (let ((n (digit-char-p c)))
+         (if n
+             (setq time (+ (* time 10) n))
+             (return))))
+    (if (char= c #\.)
+        (setq time (+ (* time 10)
+                      (digit-char-p (read-char string-stream)))
+              c (read-char string-stream))
+        (setq time (* time 10)))
+    (when (char= c #\*)
+      ;; multiply time by "number of lines affected"
+      ;; but how do I know that??
+      (setq c (read-char string-stream)))
+    (when (char= c #\/)
+      (setq force t c (read-char string-stream)))
+    (unless (char= c #\>)
+      (error "Invalid padding specification."))
+
+    ;; Decide whether to apply padding:
+    (when (or force (not (capability :xon-xoff terminfo)))
+      (setq rate (stream-baud-rate stream))
+      (when (let ((pb (capability :padding-baud-rate terminfo)))
+              (and rate (or (null pb) (> rate pb))))
+        (cond ((capability :no-pad-char terminfo)
+               (finish-output stream)
+               (sleep (/ time 10000.0)))
+              (t
+               (let ((tmp (capability :pad-char terminfo)))
+                 (when tmp (setf pad (schar tmp 0))))
+               (dotimes (i (ceiling (* rate time) 100000))
+                 (princ pad stream))))))))
+
 (defun tputs (string &rest args)
+  "Print the control string to an output stream.
+The first two items are optional stream and terminfo objects.
+Default stream: *terminal-io*
+Default terminfo: *terminfo*
+The rest of the arguments are applied to the control string via tparm."
   (when string
     (let* ((stream (if (streamp (first args)) (pop args) *terminal-io*))
 	   (terminfo (if (terminfo-p (first args)) (pop args) *terminfo*)))
@@ -929,49 +1000,14 @@
 	    ((null c))
 	  (cond ((and (char= c #\$)
 		      (eql (peek-char nil string nil) #\<))
-		 (let ((time 0) (force nil) (rate nil) (pad #\Null))
-
-		   ;; Find out how long to pad for:
-		   (read-char string) ; eat the #\<
-		   (loop
-		     (setq c (read-char string))
-		     (let ((n (digit-char-p c)))
-		       (if n
-			   (setq time (+ (* time 10) n))
-			   (return))))
-		   (if (char= c #\.)
-		       (setq time (+ (* time 10)
-				     (digit-char-p (read-char string)))
-			     c (read-char string))
-		       (setq time (* time 10)))
-		   (when (char= c #\*)
-		     ;; multiply time by "number of lines affected"
-		     ;; but how do I know that??
-		     (setq c (read-char string)))
-		   (when (char= c #\/)
-		     (setq force t c (read-char string)))
-		   (unless (char= c #\>)
-		     (error "Invalid padding specification."))
-
-		   ;; Decide whether to apply padding:
-		   (when (or force (not (capability :xon-xoff terminfo)))
-		     (setq rate (stream-baud-rate stream))
-		     (when (let ((pb (capability :padding-baud-rate terminfo)))
-			     (and rate (or (null pb) (> rate pb))))
-		       (cond ((capability :no-pad-char terminfo)
-			      (finish-output stream)
-			      (sleep (/ time 10000.0)))
-			     (t
-			      (let ((tmp (capability :pad-char terminfo)))
-				(when tmp (setf pad (schar tmp 0))))
-			      (dotimes (i (ceiling (* rate time) 100000))
-				(princ pad stream))))))))
-
+		 (print-padded-string string stream terminfo))
 		(t
 		 (princ c stream))))))
     t))
 
 (defun set-terminal (&optional name)
+  "Load the terminfo database specified, or defined per 
+the TERM environment variable."
   (setf *terminfo* (load-terminfo (or name
 				      #+ccl
 				      (ccl:getenv "TERM")
