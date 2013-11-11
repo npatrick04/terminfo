@@ -646,11 +646,11 @@ that calls the capability from *terminfo*."
 	   #+darwin (format nil "~X" (char-code (char name 0)))
 	   #-darwin (string (char name 0))))
     (let ((name (concatenate 'string (stringify-first-char name) "/" name)))
-      (dolist (path (list* #+CMU "home:.terminfo/"
-			   #+Allegro "~/.terminfo/"
-			   #-(or CMU Allegro) 
-			   (merge-pathnames ".terminfo/" (user-homedir-pathname))
-			   *terminfo-directories*))
+      (dolist (path (cons #+CMU "home:.terminfo/"
+                          #+Allegro "~/.terminfo/"
+                          #-(or CMU Allegro) 
+                          (merge-pathnames ".terminfo/" (user-homedir-pathname))
+                          *terminfo-directories*))
 	(with-open-file (stream (merge-pathnames name path)
 				:direction :input
 				:element-type '(unsigned-byte 8)
