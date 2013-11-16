@@ -946,26 +946,34 @@ that calls the capability from *terminfo*."
 		  2500000 3000000 3500000 4000000)
 		(logxor baud unix::tty-cbaudex)))))))
 
-(defun decode-padding (string-stream &optional (junk-allowed nil))
-  "Return the values of
+(defun decode-padding (string &optional (junk-allowed nil))
+  "Decode padding from string or character stream.
+
+Return the values of
 - padding time in milliseconds (could have a tenth)
 - whether or not to force the padding
 - whether or not to multiply by the lines affected
+- start of padding character #\<
 e.g. \"<10.5*/>\"   =>   (values 10.5 T T)
 
 Setting junk-allowed to t will decode a padding string
 that does not start with #\<.
 e.g. \"ESC[<10.5/>\"   => (values 10.5 T NIL)"
-  (declare (type stream string-stream))
-  (let ((time 0) force line-multiplier c)
+  (declare (type (or string stream) string))
+  (let ((time 0) (pad-start 0) force line-multiplier c string-stream)
+    (if (stringp string)
+        (setf string-stream (make-string-input-stream string))
+        (setf string-stream string))
     ;; Find out how long to pad for:
     (if junk-allowed
         (do ((c (read-char string-stream nil nil)
                 (read-char string-stream nil nil)))
-            ((or (null c)
-                 (char= c #\<))
-             (when (null c) (return-from decode-padding
-                              (values nil nil nil)))))
+            ((or (null c) (char= c #\<))
+             (when (null c)
+               (if (stringp string) (close string-stream))
+               (return-from decode-padding
+                 (values nil nil nil nil))))
+          (incf pad-start))
         (read-char string-stream))      ; eat the #\<
     (loop
        (setq c (read-char string-stream))
@@ -986,7 +994,7 @@ e.g. \"ESC[<10.5/>\"   => (values 10.5 T NIL)"
           (setq force t
                 c (read-char string-stream)))
          (#\>
-          (return (values time force line-multiplier)))
+          (return (values time force line-multiplier pad-start)))
          (t (error "Invalid padding specification."))))))
 
 (defun print-padding (string-stream &optional
