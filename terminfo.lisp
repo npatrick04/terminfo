@@ -1007,7 +1007,10 @@ of the terminfo data."
         ;; Note: the line multiplier isn't implemented
         (time force line-multiplier) (decode-padding string-stream)
     ;; Decide whether to apply padding:
-    (when (or force (not (capability :xon-xoff terminfo)))
+    (when (or force
+
+              ;; TODO: capability doesn't indicate activation...
+              (not (capability :xon-xoff terminfo)))
       (setq rate (stream-baud-rate stream))
       (when (let ((pb (capability :padding-baud-rate terminfo)))
               (and rate (or (null pb) (> rate pb))))
