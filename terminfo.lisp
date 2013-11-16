@@ -33,8 +33,9 @@
 
 (in-package "TERMINFO")
 
-(export '(*terminfo-directories* *terminfo* capability tparm tputs
-	  set-terminal capabilities))
+(export '(*terminfo-directories* *terminfo*
+          capability tparm tputs decode-padding
+          set-terminal capabilities))
 
 (defvar *terminfo-directories* '("/etc/terminfo/"
 				 "/lib/terminfo/"
@@ -945,34 +946,58 @@ that calls the capability from *terminfo*."
 		  2500000 3000000 3500000 4000000)
 		(logxor baud unix::tty-cbaudex)))))))
 
-(defun print-padded-string (string-stream stream terminfo)
-  "Consume a chunk of a string-stream that defines padding and
-pass the padding on to the stream depending on the capability
-of the terminfo data."
-  (let ((time 0) (force nil) (rate nil) (pad #\Null) c)
+(defun decode-padding (string-stream &optional (junk-allowed nil))
+  "Return the values of
+- padding time in milliseconds (could have a tenth)
+- whether or not to force the padding
+- whether or not to multiply by the lines affected
+e.g. \"<10.5*/>\"   =>   (values 10.5 T T)
 
+Setting junk-allowed to t will decode a padding string
+that does not start with #\<.
+e.g. \"ESC[<10.5/>\"   => (values 10.5 T NIL)"
+  (declare (type stream string-stream))
+  (let ((time 0) force line-multiplier c)
     ;; Find out how long to pad for:
-    (read-char string-stream) ; eat the #\<
+    (if junk-allowed
+        (do ((c (read-char string-stream nil nil)
+                (read-char string-stream nil nil)))
+            ((or (null c)
+                 (char= c #\<))
+             (when (null c) (return-from decode-padding
+                              (values nil nil nil)))))
+        (read-char string-stream))      ; eat the #\<
     (loop
        (setq c (read-char string-stream))
        (let ((n (digit-char-p c)))
          (if n
              (setq time (+ (* time 10) n))
              (return))))
-    (if (char= c #\.)
-        (setq time (+ (* time 10)
-                      (digit-char-p (read-char string-stream)))
-              c (read-char string-stream))
-        (setq time (* time 10)))
-    (when (char= c #\*)
-      ;; multiply time by "number of lines affected"
-      ;; but how do I know that??
-      (setq c (read-char string-stream)))
-    (when (char= c #\/)
-      (setq force t c (read-char string-stream)))
-    (unless (char= c #\>)
-      (error "Invalid padding specification."))
+    (when (char= c #\.)
+      (setq time (+ time
+                    (* 0.1 (digit-char-p (read-char string-stream))))
+            c (read-char string-stream)))
+    (loop
+       (case c
+         (#\*
+          (setq line-multiplier t
+                c (read-char string-stream)))
+         (#\/
+          (setq force t
+                c (read-char string-stream)))
+         (#\>
+          (return (values time force line-multiplier)))
+         (t (error "Invalid padding specification."))))))
 
+(defun print-padding (string-stream &optional
+                                      (stream *standard-output*)
+                                      (terminfo *terminfo*))
+  "Consume a chunk of a string-stream that defines padding and
+pass the padding on to the stream depending on the capability
+of the terminfo data."
+  (multiple-value-bind
+        ;; Note: the line multiplier isn't implemented
+        (time force line-multiplier) (decode-padding string-stream)
     ;; Decide whether to apply padding:
     (when (or force (not (capability :xon-xoff terminfo)))
       (setq rate (stream-baud-rate stream))
@@ -980,7 +1005,7 @@ of the terminfo data."
               (and rate (or (null pb) (> rate pb))))
         (cond ((capability :no-pad-char terminfo)
                (finish-output stream)
-               (sleep (/ time 10000.0)))
+               (sleep (* time 1000)))
               (t
                (let ((tmp (capability :pad-char terminfo)))
                  (when tmp (setf pad (schar tmp 0))))
@@ -1001,7 +1026,7 @@ The rest of the arguments are applied to the control string via tparm."
 	    ((null c))
 	  (cond ((and (char= c #\$)
 		      (eql (peek-char nil string nil) #\<))
-		 (print-padded-string string stream terminfo))
+		 (print-padding string stream terminfo))
 		(t
 		 (princ c stream))))))
     t))
