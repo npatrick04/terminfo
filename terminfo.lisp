@@ -1017,7 +1017,7 @@ of the terminfo data."
               (t
                (let ((tmp (capability :pad-char terminfo)))
                  (when tmp (setf pad (schar tmp 0))))
-               (dotimes (i (ceiling (* rate time) 100000))
+               (dotimes (i (ceiling (* rate time 1000) 100000))
                  (princ pad stream))))))))
 
 (defun tputs (string &rest args)
