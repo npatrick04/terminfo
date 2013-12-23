@@ -946,101 +946,150 @@ that calls the capability from *terminfo*."
 		  2500000 3000000 3500000 4000000)
 		(logxor baud unix::tty-cbaudex)))))))
 
+(defstruct padding time force line-multiplier)
+
 (defun decode-padding (string &optional (junk-allowed nil))
-  "Decode padding from string or character stream.
+  "Decode padding from string.
 
 Return the values of
 - padding time in milliseconds (could have a tenth)
 - whether or not to force the padding
 - whether or not to multiply by the lines affected
-- start of padding character #\<
-e.g. \"<10.5*/>\"   =>   (values 10.5 T T)
+- end of padding #\> index into string
+e.g. \"<10.5*/>\"   =>   (values (make-padding 10.5 T T) 7)
 
 Setting junk-allowed to t will decode a padding string
 that does not start with #\<.
-e.g. \"ESC[<10.5/>\"   => (values 10.5 T NIL)"
-  (declare (type (or string stream) string))
-  (let ((time 0) (pad-start 0) force line-multiplier c string-stream)
-    (if (stringp string)
-        (setf string-stream (make-string-input-stream string))
-        (setf string-stream string))
-    ;; Find out how long to pad for:
-    (if junk-allowed
-        (do ((c (read-char string-stream nil nil)
-                (read-char string-stream nil nil)))
-            ((or (null c) (char= c #\<))
-             (when (null c)
-               (if (stringp string) (close string-stream))
-               (return-from decode-padding
-                 (values nil nil nil nil))))
-          (incf pad-start))
-        (read-char string-stream))      ; eat the #\<
-    (loop
-       (setq c (read-char string-stream))
-       (let ((n (digit-char-p c)))
-         (if n
-             (setq time (+ (* time 10) n))
-             (return))))
-    (when (char= c #\.)
-      (setq time (+ time
-                    (* 0.1 (digit-char-p (read-char string-stream))))
-            c (read-char string-stream)))
-    (loop
-       (case c
-         (#\*
-          (setq line-multiplier t
-                c (read-char string-stream)))
-         (#\/
-          (setq force t
-                c (read-char string-stream)))
-         (#\>
-          (return (values time force line-multiplier pad-start)))
-         (t (error "Invalid padding specification."))))))
+e.g. \"<10.5/>\"   => (values (make-padding 10.5 T NIL) 7)"
+  (declare (type string string))
+  (unless (find #\> string)
+    (error "Invalid padding specification"))
+  (do ((start (if junk-allowed
+                  (1+ (position #\< string))
+                  1))
+       (time 0)
+       (pad-end)
+       (force)
+       (line-multiplier))
+      (pad-end
+       (values (make-padding :time time :force force :line-multiplier line-multiplier) pad-end))
+    (let ((c (elt string start)))
+      (cond
+        ((and (char= c #\*)
+              (not line-multiplier))
+         (setf line-multiplier t
+               start (1+ start)))
+        ((and (char= c #\/)
+              (not force))
+         (setf force t
+               start (1+ start)))
+        ((char= c #\>)
+         (setf pad-end (1+ start)))
+        ((and (digit-char-p (elt string start))
+              (zerop time))
+         (let* ((end (position-if-not #'digit-char-p string :start start))
+                (ms (parse-integer string :start start :end end)))
+           (if (char= (elt string end) #\.)
+               (setf time (+ ms (* 0.1 (digit-char-p
+                                        (elt string (1+ end)))))
+                     start (+ end 2))
+               (setf time ms
+                     start end))))
+        (t (error "Invalid padding specification"))))))
 
-(defun print-padding (string-stream &optional
-                                      (stream *standard-output*)
-                                      (terminfo *terminfo*))
-  "Consume a chunk of a string-stream that defines padding and
-pass the padding on to the stream depending on the capability
-of the terminfo data."
-  (multiple-value-bind
-        ;; Note: the line multiplier isn't implemented
-        (time force line-multiplier) (decode-padding string-stream)
-    ;; Decide whether to apply padding:
-    (when (or force
+(defun strings-and-delays (string)
+  "Decompose the command string and delays into a list of
+strings and delay time specifications.  
 
-              ;; TODO: capability doesn't indicate activation...
-              (not (capability :xon-xoff terminfo)))
-      (setq rate (stream-baud-rate stream))
-      (when (let ((pb (capability :padding-baud-rate terminfo)))
-              (and rate (or (null pb) (> rate pb))))
-        (cond ((capability :no-pad-char terminfo)
-               (finish-output stream)
-               (sleep (* time 1000)))
-              (t
-               (let ((tmp (capability :pad-char terminfo)))
-                 (when tmp (setf pad (schar tmp 0))))
-               (dotimes (i (ceiling (* rate time 1000) 100000))
-                 (princ pad stream))))))))
+The delay time entries are lists of the delay in milliseconds,
+t or nil for / which indicates a delay time that needs to be forced,
+and t or nil for * which indicates a multiplier for lines affected."
+  (declare (type string string)
+           (optimize (debug 3)))
+  (do ((strings-and-delays ())
+       (start 0)
+       (length (length string)))
+      ((>= start length) (nreverse strings-and-delays))
+    (let ((found (search "$<" string :start2 start)))
+      (if found
+          (progn
+            (when (/= found start)
+              (push (subseq string start found)
+                    strings-and-delays)
+              (setf start found))
+            (multiple-value-bind
+                  (padding end)
+                (decode-padding (subseq string (1+ found)))
+              (push padding strings-and-delays)
+              (incf start (1+ end))))
+          (return (append (nreverse strings-and-delays)
+                          (list (subseq string start))))))))
+;; CL-USER> (ti::strings-and-delays "A{3}$<10.5*>B{2}")
+;; ("A{3}" (10.5 NIL T) "B{2}")
+;; CL-USER> (ti::strings-and-delays "A{3}$<10.5*>B{2}$<5>c")
+;; ("A{3}" (10.5 NIL T) "B{2}" (5 NIL NIL) "c")
+;; CL-USER> (ti::strings-and-delays "A{3}$<10.5*>B{2}$<5/>c")
+;; ("A{3}" (10.5 NIL T) "B{2}" (5 T NIL) "c")
+;; CL-USER> (ti::strings-and-delays "A{3}")
+;; ("A{3}")
+;; CL-USER> 
 
-(defun tputs (string &rest args)
-  "Print the control string to an output stream.
-The first two items are optional stream and terminfo objects.
-Default stream: *terminal-io*
-Default terminfo: *terminfo*
-The rest of the arguments are applied to the control string via tparm."
+(defun print-padding (padding &key
+                                (stream *standard-output*)
+                                baud-rate (affected-lines 1)
+                                (terminfo *terminfo*))
+  "Print a padding definition to the stream depending
+on the capability of the terminfo data. 
+
+If stream is nil, the padding characters or delay time
+in ms will be returned.  If a stream is provided, the
+padding characters will be written, or the function will
+sleep for the specified time."
+  (declare (type padding padding))
+  ;; Decide whether to apply padding:
+  (when (or (padding-force padding)
+            ;; TODO: capability doesn't indicate activation...
+            (not (capability :xon-xoff terminfo)))
+    (when (let ((pb (capability :padding-baud-rate terminfo)))
+            (and baud-rate (or (null pb) (> baud-rate pb))))
+      (cond ((capability :no-pad-char terminfo)
+             (if stream
+                 (progn (finish-output stream)
+                        (sleep (* (padding-time padding) 0.001 affected-lines)))
+                 (* (padding-time padding) affected-lines)))
+            (t
+             (let ((tmp (capability :pad-char terminfo))
+                   (null-count (ceiling (* baud-rate (padding-time padding) 1000 affected-lines) 100000)))
+               (let ((pad (or (and tmp (schar tmp 0))
+                              #\Null)))
+                 (if stream
+                     (dotimes (i null-count)
+                       (princ pad stream))
+                     (make-string null-count :initial-element pad)))))))))
+
+(defmacro tputs (&whole whole
+                   string &key (terminfo *terminfo*)
+                       stream baud-rate (affected-lines 1))
+  `(progn; (print ',whole)
+          (%tputs ,string :terminfo ,terminfo :stream ,stream
+                  :baud-rate ,baud-rate :affected-lines ,affected-lines)))
+
+(defun %tputs (string &key (terminfo *terminfo*)
+                       stream baud-rate (affected-lines 1))
+  "Print the control string to an output stream.  If stream is nil,
+a list of strings and delay times is returned."
+  (declare (optimize (debug 3))
+           (type fixnum affected-lines))
   (when string
-    (let* ((stream (if (streamp (first args)) (pop args) *terminal-io*))
-	   (terminfo (if (terminfo-p (first args)) (pop args) *terminfo*)))
-      (with-input-from-string (string (apply #'tparm string args))
-	(do ((c (read-char string nil) (read-char string nil)))
-	    ((null c))
-	  (cond ((and (char= c #\$)
-		      (eql (peek-char nil string nil) #\<))
-		 (print-padding string stream terminfo))
-		(t
-		 (princ c stream))))))
-    t))
+    (let ((strings-and-delays (strings-and-delays string))
+          (result ()))
+      (dolist (item strings-and-delays (and (not stream) (nreverse result)))
+        (let ((printed
+               (typecase item
+                 (padding (print-padding item :baud-rate baud-rate :stream stream :terminfo terminfo :affected-lines affected-lines))
+                 (string (if stream (princ item stream) item)))))
+          (unless stream
+            (push printed result)))))))
 
 (defun set-terminal (&optional name)
   "Load the terminfo database specified, or defined per 
@@ -1059,8 +1108,5 @@ the TERM environment variable."
                                       (lispworks:environment-variable "TERM")
 				      #| if all else fails |#
 				      "dumb"))))
-
-;;(if (null *terminfo*)
-;;    (set-terminal))
 
 (provide :terminfo)
