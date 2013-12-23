@@ -915,37 +915,6 @@ that calls the capability from *terminfo*."
 		  #| that's all, folks |#))
 	      (t (princ c out)))))))
 
-(defun stream-fileno (stream)
-  (typecase stream
-    #+CMU
-    (sys:fd-stream
-     (sys:fd-stream-fd stream))
-    (two-way-stream
-     (stream-fileno (two-way-stream-output-stream stream)))
-    (synonym-stream
-     (stream-fileno (symbol-value (synonym-stream-symbol stream))))
-    (echo-stream
-     (stream-fileno (echo-stream-output-stream stream)))
-    (broadcast-stream
-     (stream-fileno (first (broadcast-stream-streams stream))))
-    (otherwise nil)))
-
-(defun stream-baud-rate (stream)
-  #+CMU
-  (alien:with-alien ((termios (alien:struct unix:termios)))
-    (declare (optimize (ext:inhibit-warnings 3)))
-    (when (unix:unix-tcgetattr (stream-fileno stream) termios)
-      (let ((baud (logand unix:tty-cbaud
-			  (alien:slot termios 'unix:c-cflag))))
-	(if (< baud unix::tty-cbaudex)
-	  (aref #(0 50 75 110 134 150 200 300 600 1200
-		  1800 2400 4800 9600 19200 38400)
-		baud)
-	  (aref #(57600 115200 230400 460800 500000 576000
-		  921600 1000000 1152000 1500000 2000000
-		  2500000 3000000 3500000 4000000)
-		(logxor baud unix::tty-cbaudex)))))))
-
 (defstruct padding time force line-multiplier)
 
 (defun decode-padding (string &optional (junk-allowed nil))
