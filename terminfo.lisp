@@ -647,11 +647,11 @@ that calls the capability from *terminfo*."
 	   #+darwin (format nil "~X" (char-code (char name 0)))
 	   #-darwin (string (char name 0))))
     (let ((name (concatenate 'string (stringify-first-char name) "/" name)))
-      (dolist (path (cons #+CMU "home:.terminfo/"
-                          #+Allegro "~/.terminfo/"
-                          #-(or CMU Allegro) 
-                          (merge-pathnames ".terminfo/" (user-homedir-pathname))
-                          *terminfo-directories*))
+      (dolist (path (list* #+CMU "home:.terminfo/"
+			   #+Allegro "~/.terminfo/"
+			   #-(or CMU Allegro) 
+			   (merge-pathnames ".terminfo/" (user-homedir-pathname))
+			   *terminfo-directories*))
 	(with-open-file (stream (merge-pathnames name path)
 				:direction :input
 				:element-type '(unsigned-byte 8)
@@ -968,7 +968,7 @@ e.g. \"<10.5/>\"   => (values (make-padding 10.5 T NIL) 7)"
 
 (defun strings-and-delays (string)
   "Decompose the command string and delays into a list of
-strings and delay time specifications.  
+strings and delay time padding structs.
 
 The delay time entries are lists of the delay in milliseconds,
 t or nil for / which indicates a delay time that needs to be forced,
@@ -993,18 +993,19 @@ and t or nil for * which indicates a multiplier for lines affected."
               (incf start (1+ end))))
           (return (append (nreverse strings-and-delays)
                           (list (subseq string start))))))))
-;; CL-USER> (ti::strings-and-delays "A{3}$<10.5*>B{2}")
-;; ("A{3}" (10.5 NIL T) "B{2}")
-;; CL-USER> (ti::strings-and-delays "A{3}$<10.5*>B{2}$<5>c")
-;; ("A{3}" (10.5 NIL T) "B{2}" (5 NIL NIL) "c")
-;; CL-USER> (ti::strings-and-delays "A{3}$<10.5*>B{2}$<5/>c")
-;; ("A{3}" (10.5 NIL T) "B{2}" (5 T NIL) "c")
-;; CL-USER> (ti::strings-and-delays "A{3}")
+;; TI> (ti::strings-and-delays "A{3}$<10.5*>B{2}")
+;; ("A{3}" #S(PADDING :TIME 10.5 :FORCE NIL :LINE-MULTIPLIER T) "B{2}")
+;; TI> (ti::strings-and-delays "A{3}$<10.5*>B{2}$<5>c")
+;; ("A{3}" #S(PADDING :TIME 10.5 :FORCE NIL :LINE-MULTIPLIER T) "B{2}"
+;;  #S(PADDING :TIME 5 :FORCE NIL :LINE-MULTIPLIER NIL) "c")
+;; TI> (ti::strings-and-delays "A{3}$<10.5*>B{2}$<5/>c")
+;; ("A{3}" #S(PADDING :TIME 10.5 :FORCE NIL :LINE-MULTIPLIER T) "B{2}"
+;;  #S(PADDING :TIME 5 :FORCE T :LINE-MULTIPLIER NIL) "c")
+;; TI> (ti::strings-and-delays "A{3}")
 ;; ("A{3}")
-;; CL-USER> 
 
 (defun print-padding (padding &key
-                                (stream *standard-output*)
+                                stream
                                 baud-rate (affected-lines 1)
                                 (terminfo *terminfo*))
   "Print a padding definition to the stream depending
@@ -1037,20 +1038,26 @@ sleep for the specified time."
                      (make-string null-count :initial-element pad)))))))))
 
 (defmacro tputs (string &key
-                          (terminfo *terminfo*)
+                          terminfo
                           stream
                           baud-rate
                           (affected-lines 1))
   `(%tputs ,(if (consp string)
                 `(tparm ,@string)
-                string)
-           :terminfo ,terminfo :stream ,stream
-           :baud-rate ,baud-rate :affected-lines ,affected-lines))
+                `(tparm ,string))
+           ,@(when terminfo `(:terminfo ,terminfo))
+           ,@(when stream `(:stream ,stream))
+           :baud-rate ,baud-rate
+           :affected-lines ,affected-lines))
 
-(defun %tputs (string &key (terminfo *terminfo*)
-                       stream baud-rate (affected-lines 1))
+(defun %tputs (string &key
+                        (terminfo *terminfo*)
+                        (stream *terminal-io*)
+                        baud-rate
+                        affected-lines)
   "Print the control string to an output stream.  If stream is nil,
-a list of strings and delay times is returned."
+a list of strings and delay times is returned.
+String must already have been operated upon by tparm if necessary."
   (declare (optimize (debug 3))
            (type fixnum affected-lines))
   (when string
