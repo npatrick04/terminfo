@@ -1036,12 +1036,16 @@ sleep for the specified time."
                        (princ pad stream))
                      (make-string null-count :initial-element pad)))))))))
 
-(defmacro tputs (&whole whole
-                   string &key (terminfo *terminfo*)
-                       stream baud-rate (affected-lines 1))
-  `(progn; (print ',whole)
-          (%tputs ,string :terminfo ,terminfo :stream ,stream
-                  :baud-rate ,baud-rate :affected-lines ,affected-lines)))
+(defmacro tputs (string &key
+                          (terminfo *terminfo*)
+                          stream
+                          baud-rate
+                          (affected-lines 1))
+  `(%tputs ,(if (consp string)
+                `(tparm ,@string)
+                string)
+           :terminfo ,terminfo :stream ,stream
+           :baud-rate ,baud-rate :affected-lines ,affected-lines))
 
 (defun %tputs (string &key (terminfo *terminfo*)
                        stream baud-rate (affected-lines 1))
