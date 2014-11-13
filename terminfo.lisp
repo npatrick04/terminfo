@@ -1036,24 +1036,11 @@ sleep for the specified time."
                        (princ pad stream))
                      (make-string null-count :initial-element pad)))))))))
 
-(defmacro tputs (string &key
-                          terminfo
-                          stream
-                          baud-rate
-                          (affected-lines 1))
-  `(%tputs ,(if (consp string)
-                `(tparm ,@string)
-                `(tparm ,string))
-           ,@(when terminfo `(:terminfo ,terminfo))
-           ,@(when stream `(:stream ,stream))
-           :baud-rate ,baud-rate
-           :affected-lines ,affected-lines))
-
-(defun %tputs (string &key
-                        (terminfo *terminfo*)
-                        (stream *terminal-io*)
-                        baud-rate
-                        affected-lines)
+(defun tputs (string &key
+                       (terminfo *terminfo*)
+                       (stream *terminal-io*)
+                       baud-rate
+                       (affected-lines 1))
   "Print the control string to an output stream.  If stream is nil,
 a list of strings and delay times is returned.
 String must already have been operated upon by tparm if necessary."
