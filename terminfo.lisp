@@ -973,8 +973,7 @@ strings and delay time padding structs.
 The delay time entries are lists of the delay in milliseconds,
 t or nil for / which indicates a delay time that needs to be forced,
 and t or nil for * which indicates a multiplier for lines affected."
-  (declare (type string string)
-           (optimize (debug 3)))
+  (declare (type string string))
   (do ((strings-and-delays ())
        (start 0)
        (length (length string)))
@@ -1058,8 +1057,7 @@ sleep for the specified time."
   "Print the control string to an output stream.  If stream is nil,
 a list of strings and delay times is returned.
 String must already have been operated upon by tparm if necessary."
-  (declare (optimize (debug 3))
-           (type fixnum affected-lines))
+  (declare (type fixnum affected-lines))
   (when string
     (let ((strings-and-delays (strings-and-delays string))
           (result ()))
