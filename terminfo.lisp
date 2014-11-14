@@ -1036,11 +1036,35 @@ sleep for the specified time."
                        (princ pad stream))
                      (make-string null-count :initial-element pad)))))))))
 
-(defun tputs (string &key
-                       (terminfo *terminfo*)
-                       (stream *terminal-io*)
-                       baud-rate
-                       (affected-lines 1))
+(defun remove-keywords (list)
+  (declare (optimize debug))
+  (do ((result () (cons (car rest) result))
+       (rest list (cdr rest)))
+      ((or (not rest) (keywordp (car rest))) 
+       (nreverse result))))
+
+(defmacro tputs (string &rest args)
+  "Given a string and its arguments, compose the appropriate command 
+for the terminfo terminal and put it into the stream, or return
+a list of strings and delay times when stream is nil.
+Keyword arguments are passed on to the executing function, and include:
+ (terminfo *terminfo*)
+ (stream *terminal-io*)
+ baud-rate
+ (affected-lines 1))
+"
+    ;; There's got to be a better way...
+  (let ((args (subseq args 0 (position-if #'keywordp args)))
+        (keywords (member-if #'keywordp args)))
+    `(%tputs ,(if args `(tparm ,string ,@args)
+                  string)
+             ,@keywords)))
+
+(defun %tputs (string &key
+                        (terminfo *terminfo*)
+                        (stream *terminal-io*)
+                        baud-rate
+                        (affected-lines 1))
   "Print the control string to an output stream.  If stream is nil,
 a list of strings and delay times is returned.
 String must already have been operated upon by tparm if necessary."
