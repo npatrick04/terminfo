@@ -645,7 +645,7 @@ that calls the capability from *terminfo*."
 
 (defun load-terminfo (name)
   (let ((name (concatenate 'string #-darwin (string (char name 0))
-                           #+darwin (format nil "~X" (char-code (char-name 0)))
+                           #+darwin (format nil "~X" (char-code (char name 0)))
 			   "/" name)))
     (dolist (path (list* (merge-pathnames
                           (make-pathname :directory '(:relative ".terminfo"))
