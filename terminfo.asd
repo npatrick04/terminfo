@@ -25,8 +25,8 @@
 
 (asdf:defsystem :terminfo
     :license "copyrights"
-    :author '("Paul Foley <mycroft@actrix.gen.nz>"
-              "Nikodemus Siivola <nikodemus@random-state.net>"
-              "Nick Patrick <npatrick04@gmail.com")
+    :author "Paul Foley <mycroft@actrix.gen.nz>
+Nikodemus Siivola <nikodemus@random-state.net>
+Nick Patrick <npatrick04@gmail.com>"
     :description "Terminfo database front-end."
     :components ((:file "terminfo")))
