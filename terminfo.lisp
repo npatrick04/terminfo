@@ -59,9 +59,10 @@ is set any time set-terminal is called.")
 		  (declare (ignore depth))
 		  (print-unreadable-object (object stream :type t :identity t)
 		    (format stream "~A" (first (terminfo-names object)))))))
+    (number-format (required-argument) :type (member :16-bit :32-bit))
     (names (required-argument) :type list :read-only t)
     (booleans (required-argument) :type (simple-array (member t nil) (*)))
-    (numbers (required-argument) :type (simple-array (signed-byte 16) (*)))
+    (numbers (required-argument) :type (simple-array (signed-byte 32) (*)))
     (strings (required-argument) :type (simple-array t (*)))))
 
 #+CMU
@@ -643,10 +644,39 @@ that calls the capability from *terminfo*."
   (defcap memory-unlock string 412)
   (defcap box-chars-1 string 413))
 
+(defconstant +16-bit-magic+ #o432)
+(defconstant +32-bit-magic+ #o1036
+  "Per the term(5) man page, 32-bit magic
+should be #o542, however, everyone 
+apparently used 542 (#o1036) in practice.")
+
+(defun read-short (stream)
+  (let ((n (+ (read-byte stream)
+              (ash (read-byte stream) 8))))
+    (if (> n  #x7FFF)
+        (- n #x10000)
+        n)))
+
+(defun read-int (stream)
+  (let ((n (+ (read-byte stream)
+              (ash (read-byte stream) 8)
+              (ash (read-byte stream) 16)
+              (ash (read-byte stream) 24))))
+    (if (> n  #x7FFFFFFF)
+        (- n #x100000000)
+        n)))
+
+(defun read-string (stream)
+  (do ((c (read-byte stream) (read-byte stream))
+       (s '()))
+      ((zerop c) (coerce (nreverse s) 'string))
+    (push (code-char c) s)))
+
 (defun load-terminfo (name)
   (let ((name (concatenate 'string #-darwin (string (char name 0))
                            #+darwin (format nil "~X" (char-code (char name 0)))
-			   "/" name)))
+			   "/" name))
+        (number-format nil))
     (dolist (path (list* (merge-pathnames
                           (make-pathname :directory '(:relative ".terminfo"))
                           (user-homedir-pathname))
@@ -656,21 +686,16 @@ that calls the capability from *terminfo*."
                               :element-type '(unsigned-byte 8)
                               :if-does-not-exist nil)
         (when stream
-          (flet ((read-short (stream)
-                             (let ((n (+ (read-byte stream) (* 256 (read-byte stream)))))
-                               (if (> n 32767)
-                                   (- n 65536)
-                                 n)))
-                 (read-string (stream)
-                              (do ((c (read-byte stream) (read-byte stream))
-                                   (s '()))
-                                  ((zerop c) (coerce (nreverse s) 'string))
-                                (push (code-char c) s))))
-            (let* ((magic (let ((whosit (read-short stream)))
-                            (if (= whosit #o432)
-                                whosit
-                              (error "Invalid file format"))))
-                   (sznames (read-short stream))
+          (flet ((read-number (stream)
+                   (ecase number-format
+                     (:16-bit (read-short stream))
+                     (:32-bit (read-int stream)))))
+            (let ((magic (read-short stream)))
+              (cond
+                ((= magic +16-bit-magic+) (setf number-format :16-bit))
+                ((= magic +32-bit-magic+) (setf number-format :32-bit))
+                (t (error "Invalid file format #o~o (~A)" magic magic))))
+            (let* ((sznames (read-short stream))
                    (szbooleans (read-short stream))
                    (sznumbers (read-short stream))
                    (szstrings (read-short stream))
@@ -683,7 +708,7 @@ that calls the capability from *terminfo*."
                                          :element-type '(or t nil)
                                          :initial-element nil))
                    (numbers (make-array sznumbers
-                                        :element-type '(signed-byte 16)
+                                        :element-type '(signed-byte 32)
                                         :initial-element -1))
                    (strings (make-array szstrings
                                         :element-type '(signed-byte 16)
@@ -695,7 +720,7 @@ that calls the capability from *terminfo*."
               (when (oddp (+ sznames szbooleans))
                 (read-byte stream))
               (dotimes (i sznumbers)
-                (setf (aref numbers i) (read-short stream)))
+                (setf (aref numbers i) (read-number stream)))
               (dotimes (i szstrings)
                 (unless (minusp (setf (aref strings i) (read-short stream)))
                   (incf count)))
@@ -709,7 +734,8 @@ that calls the capability from *terminfo*."
                                   (position #\Null stringtable
                                             :start (aref strings i))))))
                 (setq strings xtrings))
-              (return (make-terminfo :names names :booleans booleans
+              (return (make-terminfo :number-format number-format
+                                     :names names :booleans booleans
                                      :numbers numbers :strings strings)))))))))
 
 (defun xform (value format flags width precision)
