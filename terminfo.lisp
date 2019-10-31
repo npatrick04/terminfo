@@ -1002,7 +1002,8 @@ apparently used 542 (#o1036) in practice.")
 
 (defun stream-baud-rate (stream)
   (declare (type stream stream)
-	   (values (or null (integer 0 4000000))))
+	   (values (or null (integer 0 4000000)))
+           (ignorable stream))
   #+CMU
   (alien:with-alien ((termios (alien:struct unix:termios)))
     (declare (optimize (ext:inhibit-warnings 3)))
@@ -1019,7 +1020,8 @@ apparently used 542 (#o1036) in practice.")
 		(logxor baud unix::tty-cbaudex)))))))
 
 (defun terminal-size (&optional (stream *terminal-io*))
-  (declare (type stream stream))
+  (declare (type stream stream)
+           (ignorable stream))
   #+CMU
   (alien:with-alien ((winsz (alien:struct unix:winsize)))
     (declare (optimize (ext:inhibit-warnings 3)))
