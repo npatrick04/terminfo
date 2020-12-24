@@ -916,7 +916,7 @@ apparently used 542 (#o1036) in practice.")
 		state6
 		state7
 		state8
-		  (princ (xform (pop stack) c flags width precision) out)
+		  (princ (xform (truncate (pop stack)) c flags width precision) out)
 		  (go terminal)
 		state9
 		  (let* ((i (digit-char-p (read-char in)))
