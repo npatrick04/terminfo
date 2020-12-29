@@ -672,71 +672,72 @@ apparently used 542 (#o1036) in practice.")
       ((zerop c) (coerce (nreverse s) 'string))
     (push (code-char c) s)))
 
+(defun terminfo-path (name)
+  "Return the PATH there there terminfo database for NAME is located."
+  (loop :with rel-path := (format nil "~A/~A" (string (char name 0)) name)
+        :for dir :in *terminfo-directories*
+        :for path := (merge-pathnames rel-path dir)
+        :when (probe-file path)
+          :return path))
+
 (defun load-terminfo (name)
-  (let ((name (concatenate 'string #-darwin (string (char name 0))
-                           #+darwin (format nil "~X" (char-code (char name 0)))
-			   "/" name))
+  (let ((terminfo-file (terminfo-path name))
         (number-format nil))
-    (dolist (path (list* (merge-pathnames
-                          (make-pathname :directory '(:relative ".terminfo"))
-                          (user-homedir-pathname))
-			 *terminfo-directories*))
-      (with-open-file (stream (merge-pathnames name path)
-                              :direction :input
-                              :element-type '(unsigned-byte 8)
-                              :if-does-not-exist nil)
-        (when stream
-          (flet ((read-number (stream)
-                   (ecase number-format
-                     (:16-bit (read-short stream))
-                     (:32-bit (read-int stream)))))
-            (let ((magic (read-short stream)))
-              (cond
-                ((= magic +16-bit-magic+) (setf number-format :16-bit))
-                ((= magic +32-bit-magic+) (setf number-format :32-bit))
-                (t (error "Invalid file format #o~o (~A)" magic magic))))
-            (let* ((sznames (read-short stream))
-                   (szbooleans (read-short stream))
-                   (sznumbers (read-short stream))
-                   (szstrings (read-short stream))
-                   (szstringtable (read-short stream))
-                   (names (let ((string (read-string stream)))
-                            (loop for i = 0 then (1+ j)
-                                  as j = (position #\| string :start i)
-                                  collect (subseq string i j) while j)))
-                   (booleans (make-array szbooleans
-                                         :element-type '(or t nil)
-                                         :initial-element nil))
-                   (numbers (make-array sznumbers
-                                        :element-type '(signed-byte 32)
-                                        :initial-element -1))
-                   (strings (make-array szstrings
-                                        :element-type '(signed-byte 16)
-                                        :initial-element -1))
-                   (stringtable (make-string szstringtable))
-                   (count 0))
-              (dotimes (i szbooleans)
-                (setf (aref booleans i) (not (zerop (read-byte stream)))))
-              (when (oddp (+ sznames szbooleans))
-                (read-byte stream))
-              (dotimes (i sznumbers)
-                (setf (aref numbers i) (read-number stream)))
-              (dotimes (i szstrings)
-                (unless (minusp (setf (aref strings i) (read-short stream)))
-                  (incf count)))
-              (dotimes (i szstringtable)
-                (setf (char stringtable i) (code-char (read-byte stream))))
-              (let ((xtrings (make-array szstrings :initial-element nil)))
-                (dotimes (i szstrings)
-                  (unless (minusp (aref strings i))
-                    (setf (aref xtrings i)
-                          (subseq stringtable (aref strings i)
-                                  (position #\Null stringtable
-                                            :start (aref strings i))))))
-                (setq strings xtrings))
-              (return (make-terminfo :number-format number-format
-                                     :names names :booleans booleans
-                                     :numbers numbers :strings strings)))))))))
+    (with-open-file (stream terminfo-file
+                            :direction :input
+                            :element-type '(unsigned-byte 8)
+                            :if-does-not-exist nil)
+      (flet ((read-number (stream)
+               (ecase number-format
+                 (:16-bit (read-short stream))
+                 (:32-bit (read-int stream)))))
+        (let ((magic (read-short stream)))
+          (cond
+            ((= magic +16-bit-magic+) (setf number-format :16-bit))
+            ((= magic +32-bit-magic+) (setf number-format :32-bit))
+            (t (error "Invalid file format #o~o (~A)" magic magic))))
+        (let* ((sznames (read-short stream))
+               (szbooleans (read-short stream))
+               (sznumbers (read-short stream))
+               (szstrings (read-short stream))
+               (szstringtable (read-short stream))
+               (names (let ((string (read-string stream)))
+                        (loop for i = 0 then (1+ j)
+                              as j = (position #\| string :start i)
+                              collect (subseq string i j) while j)))
+               (booleans (make-array szbooleans
+                                     :element-type '(or t nil)
+                                     :initial-element nil))
+               (numbers (make-array sznumbers
+                                    :element-type '(signed-byte 32)
+                                    :initial-element -1))
+               (strings (make-array szstrings
+                                    :element-type '(signed-byte 16)
+                                    :initial-element -1))
+               (stringtable (make-string szstringtable))
+               (count 0))
+          (dotimes (i szbooleans)
+            (setf (aref booleans i) (not (zerop (read-byte stream)))))
+          (when (oddp (+ sznames szbooleans))
+            (read-byte stream))
+          (dotimes (i sznumbers)
+            (setf (aref numbers i) (read-number stream)))
+          (dotimes (i szstrings)
+            (unless (minusp (setf (aref strings i) (read-short stream)))
+              (incf count)))
+          (dotimes (i szstringtable)
+            (setf (char stringtable i) (code-char (read-byte stream))))
+          (let ((xtrings (make-array szstrings :initial-element nil)))
+            (dotimes (i szstrings)
+              (unless (minusp (aref strings i))
+                (setf (aref xtrings i)
+                      (subseq stringtable (aref strings i)
+                              (position #\Null stringtable
+                                        :start (aref strings i))))))
+            (setq strings xtrings))
+          (make-terminfo :number-format number-format
+                         :names names :booleans booleans
+                         :numbers numbers :strings strings))))))
 
 (defun xform (value format flags width precision)
   (let ((temp (make-array 8 :element-type 'character :fill-pointer 0
@@ -1001,7 +1002,8 @@ apparently used 542 (#o1036) in practice.")
 
 (defun stream-baud-rate (stream)
   (declare (type stream stream)
-	   (values (or null (integer 0 4000000))))
+	   (values (or null (integer 0 4000000)))
+           (ignorable stream))
   #+CMU
   (alien:with-alien ((termios (alien:struct unix:termios)))
     (declare (optimize (ext:inhibit-warnings 3)))
@@ -1018,7 +1020,8 @@ apparently used 542 (#o1036) in practice.")
 		(logxor baud unix::tty-cbaudex)))))))
 
 (defun terminal-size (&optional (stream *terminal-io*))
-  (declare (type stream stream))
+  (declare (type stream stream)
+           (ignorable stream))
   #+CMU
   (alien:with-alien ((winsz (alien:struct unix:winsize)))
     (declare (optimize (ext:inhibit-warnings 3)))
