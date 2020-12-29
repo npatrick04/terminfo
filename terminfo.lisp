@@ -824,7 +824,7 @@ apparently used 542 (#o1036) in practice.")
 		    (#\l (push (length (pop stack)) stack) (go terminal))
 		    (#\* (push (* (pop stack) (pop stack)) stack)
 			 (go terminal))
-		    (#\/ (push (let ((n (pop stack))) (/ (pop stack) n)) stack)
+		    (#\/ (push (let ((n (pop stack))) (truncate (pop stack) n)) stack)
 			 (go terminal))
 		    (#\m (push (let ((n (pop stack))) (mod (pop stack) n))
 			       stack)
@@ -916,7 +916,7 @@ apparently used 542 (#o1036) in practice.")
 		state6
 		state7
 		state8
-		  (princ (xform (truncate (pop stack)) c flags width precision) out)
+		  (princ (xform (pop stack) c flags width precision) out)
 		  (go terminal)
 		state9
 		  (let* ((i (digit-char-p (read-char in)))
